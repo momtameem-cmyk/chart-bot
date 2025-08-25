@@ -3,3 +3,4 @@ requests==2.32.0
 pandas==2.1.1
 numpy==1.24.4
 pandas_ta==0.3.14b0
+python-dotenv==1.0.0
