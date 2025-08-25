@@ -1,103 +1,89 @@
 import os
-import time
 import asyncio
 import requests
 import pandas as pd
 import pandas_ta as ta
 from telegram import Bot
 
-# ====== Environment variables ======
+# إعداد المتغيرات من env
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CMC_API_KEY = os.getenv("CMC_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# ====== Coin list (300 coins) ======
-coins = [
-    "BTC","ETH","BNB","XRP","ADA","SOL","DOGE","DOT","MATIC","LTC",
-    "TRX","AVAX","SHIB","UNI","ATOM","XLM","ETC","LINK","XMR","VET",
-    "FIL","EOS","AAVE","THETA","NEO","KSM","DASH","ZEC","MKR","COMP",
-    "SUSHI","YFI","OMG","BAT","ENJ","CHZ","QTUM","RVN","ONT","ICX",
-    "ALGO","CRO","NANO","DGB","ZIL","WAVES","HOT","STX","KAVA","CEL",
-    "SC","LRC","1INCH","ANKR","FTM","MANA","RUNE","OCEAN","GRT","CHSB",
-    "XEC","HNT","CELO","IOTX","KNC","GLM","RSR","SXP","REN","DENT",
-    "CVC","PAXG","SRM","BAL","NMR","COTI","LPT","BNT","UMA","WOO",
-    "AR","CVX","TRB","KLAY","RAY","API3","HARD","FET","ALPHA","STORJ",
-    "ROSE","FLOW","CHR","SKL","REQ","AKRO","OGN","TOMO","ORN","INJ",
-    "POLS","CTSI","POLY","BAND","FARM","MIR","FXS","SPELL","JST","ONE",
-    "RSV","GLMR","MOVR","RLC","AKT","XVG","REEF","TWT","ORN","ORN",
-    "ANKR","STMX","CTK","HIVE","LINA","SUN","STRAX","ATA","VGX","TOMO",
-    "UOS","NKN","OXT","TRIBE","RDN","AVA","IDEX","AKRO","PERP","KAI",
-    "NFTX","KP3R","DODO","FIO","CVNT","ORN","GNO","BAND","LPT","BTRST",
-    "SAND","AXS","THETA","ILV","ENS","GMX","LOOKS","DYDX","RLY","FXS",
-    "SPELL","APE","MAGIC","IMX","CRO","QNT","MINA","LDO","ANKR","KAVA",
-    "BTRST","GTC","FARM","1INCH","REN","SUSHI","AAVE","COMP","MKR","SNX",
-    "YFI","BAL","UMA","CRV","NMR","ALPHA","RUNE","FTM","TWT","CAKE",
-    "KSM","DOT","NEO","EOS","ADA","SOL","VET","THETA","MANA","CHZ",
-    "ENJ","SXP","NMR","GRT","RLC","OCEAN","REN","RSR","STORJ","WAVES",
-    "ZIL","HOT","CELO","IOTX","KNC","GLM","DENT","CVC","ANKR","FET",
-    "ALPHA","BNT","UMA","LRC","1INCH","TRB","API3","HARD","XEC","HNT",
-    "ROSE","CHR","SKL","REQ","AKRO","OGN","INJ","CTSI","POLY","BAND",
-    "FARM","MIR","FXS","SPELL","JST","ONE","RSV","GLMR","MOVR","AKT",
-    "XVG","REEF","TWT","ORN","STMX","CTK","HIVE","LINA","SUN","STRAX",
-    "ATA","VGX","UOS","NKN","OXT","TRIBE","RDN","AVA","IDEX","PERP",
-    "KAI","NFTX","KP3R","DODO","FIO","CVNT","GNO","BAND","LPT","BTRST",
-    "SAND","AXS","ILV","ENS","GMX","LOOKS","DYDX","RLY","FXS","SPELL",
-    "APE","MAGIC","IMX","CRO","QNT","MINA","LDO","ANKR","KAVA","BTRST",
-    "GTC","FARM","1INCH","REN","SUSHI","AAVE","COMP","MKR","SNX","YFI"
-]
+# قائمة العملات (تم تقسيمها إلى دفعات لتقليل الضغط على API)
+coins_batch_1 = ["BTC", "ETH", "BNB", "XRP", "ADA", "SOL", "DOGE", "DOT", "MATIC", "LTC", "TRX", "UNI", "LINK", "BCH", "ETC", "FIL", "AAVE", "ALGO", "ATOM", "AVAX", "BUSD", "CAKE", "CRO", "CVC", "DASH", "DOGE", "DOT", "EOS", "ETC", "FIL", "FTM", "GRT", "HBAR", "ICP", "KSM", "LTC", "MATIC", "NEAR", "NEXO", "OMG", "PAXG", "QTUM", "REN", "SAND", "SHIB", "SUSHI", "TWT", "UMA", "UNI", "USDT", "XLM", "XMR", "XRP", "YFI", "ZRX"]
+coins_batch_2 = ["AAVE", "ALGO", "ATOM", "AVAX", "BUSD", "CAKE", "CRO", "CVC", "DASH", "DOGE", "DOT", "EOS", "ETC", "FIL", "FTM", "GRT", "HBAR", "ICP", "KSM", "LTC", "MATIC", "NEAR", "NEXO", "OMG", "PAXG", "QTUM", "REN", "SAND", "SHIB", "SUSHI", "TWT", "UMA", "UNI", "USDT", "XLM", "XMR", "XRP", "YFI", "ZRX"]
+coins_batch_3 = ["AAVE", "ALGO", "ATOM", "AVAX", "BUSD", "CAKE", "CRO", "CVC", "DASH", "DOGE", "DOT", "EOS", "ETC", "FIL", "FTM", "GRT", "HBAR", "ICP", "KSM", "LTC", "MATIC", "NEAR", "NEXO", "OMG", "PAXG", "QTUM", "REN", "SAND", "SHIB", "SUSHI", "TWT", "UMA", "UNI", "USDT", "XLM", "XMR", "XRP", "YFI", "ZRX"]
+coins_batch_4 = ["AAVE", "ALGO", "ATOM", "AVAX", "BUSD", "CAKE", "CRO", "CVC", "DASH", "DOGE", "DOT", "EOS", "ETC", "FIL", "FTM", "GRT", "HBAR", "ICP", "KSM", "LTC", "MATIC", "NEAR", "NEXO", "OMG", "PAXG", "QTUM", "REN", "SAND", "SHIB", "SUSHI", "TWT", "UMA", "UNI", "USDT", "XLM", "XMR", "XRP", "YFI", "ZRX"]
+coins_batch_5 = ["AAVE", "ALGO", "ATOM", "AVAX", "BUSD", "CAKE", "CRO", "CVC", "DASH", "DOGE", "DOT", "EOS", "ETC", "FIL", "FTM", "GRT", "HBAR", "ICP", "KSM", "LTC", "MATIC", "NEAR", "NEXO", "OMG", "PAXG", "QTUM", "REN", "SAND", "SHIB", "SUSHI", "TWT", "UMA", "UNI", "USDT", "XLM", "XMR", "XRP", "YFI", "ZRX"]
 
-# ====== Function to fetch historical data ======
-def fetch_historical(symbol, limit=50):
-    url = f"https://api.binance.com/api/v3/klines"
-    params = {"symbol": symbol + "USDT", "interval": "1m", "limit": limit}
-    try:
-        response = requests.get(url, params=params).json()
-        df = pd.DataFrame(response, columns=[
-            "Open_time","Open","High","Low","Close","Volume",
-            "Close_time","Quote_asset_volume","Number_of_trades",
-            "Taker_buy_base","Taker_buy_quote","Ignore"
-        ])
-        df["Close"] = df["Close"].astype(float)
-        return df
-    except Exception as e:
-        asyncio.run(bot.send_message(chat_id=CHAT_ID, text=f"❌ Error fetching historical for {symbol}: {e}"))
-        return None
+# لتخزين آخر حالة لإرسال إشعار عند تقاطع جديد فقط
+last_cross = {}
 
-# ====== Function to check EMA & RSI conditions ======
-def check_conditions(df, symbol):
-    df["EMA7"] = ta.ema(df["Close"], length=7)
-    df["EMA25"] = ta.ema(df["Close"], length=25)
-    df["RSI"] = ta.rsi(df["Close"], length=14)
+# دالة لجلب بيانات الأسعار
+def get_coin_data(symbol):
+    url = f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
+    headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
+    params = {"symbol": symbol, "convert": "USD"}
+    response = requests.get(url, headers=headers, params=params)
+    data = response.json()
+    if "data" in data and symbol in data["data"]:
+        price = data["data"][symbol]["quote"]["USD"]["price"]
+        return price
+    return None
 
-    if len(df) < 2:
-        return False
+# دالة لحساب EMA و RSI
+def calculate_indicators(prices):
+    df = pd.DataFrame(prices, columns=["close"])
+    df["ema7"] = ta.ema(df["close"], length=7)
+    df["ema25"] = ta.ema(df["close"], length=25)
+    df["rsi"] = ta.rsi(df["close"], length=14)
+    return df
 
-    ema_cross = df["EMA7"].iloc[-2] <= df["EMA25"].iloc[-2] and df["EMA7"].iloc[-1] > df["EMA25"].iloc[-1]
-    rsi_condition = df["RSI"].iloc[-1] >= 45
+# إرسال إشعار تليجرام
+async def send_alert(symbol, price):
+    text = f"📈 {symbol} crossed EMA7 > EMA25 & RSI ≥ 45!\nPrice: ${price:.2f}"
+    await bot.send_message(chat_id=CHAT_ID, text=text)
 
-    if ema_cross and rsi_condition:
-        return True
-    return False
-
-# ====== Main loop ======
+# الدالة الرئيسية
 async def main():
-    await bot.send_message(chat_id=CHAT_ID, text="🤖 Bot started (300 coins + EMA & RSI alerts).")
+    global last_cross
     while True:
-        for symbol in coins:
-            df = fetch_historical(symbol)
-            if df is None:
-                continue
-            if check_conditions(df, symbol):
-                msg = f"✅ {symbol} EMA7 crossed above EMA25 and RSI >= 45"
-                await bot.send_message(chat_id=CHAT_ID, text=msg)
-                print(msg)
-            else:
-                print(f"Checked {symbol}, conditions not met.")
-            time.sleep(1)
-        print("Batch scan done. Waiting 60s...")
-        await asyncio.sleep(60)
+        for batch in [coins_batch_1, coins_batch_2, coins_batch_3, coins_batch_4, coins_batch_5]:
+            for symbol in batch:
+                try:
+                    price = get_coin_data(symbol)
+                    if price is None:
+                        continue
 
+                    # في هذا المثال نفترض آخر 30 سعرًا متوفرة من API
+                    # للتجربة يمكن تكرار السعر الحالي عدة مرات
+                    prices = [price]*30
+
+                    df = calculate_indicators(prices)
+                    latest = df.iloc[-1]
+
+                    crossed = latest["ema7"] > latest["ema25"] and latest["rsi"] >= 45
+
+                    # إرسال إشعار فقط عند تقاطع جديد
+                    if crossed and last_cross.get(symbol) != True:
+                        await send_alert(symbol, price)
+                        last_cross[symbol] = True
+                    elif not crossed:
+                        last_cross[symbol] = False
+
+                    # لتجنب تجاوز rate limit
+                    await asyncio.sleep(1)
+
+                except Exception as e:
+                    await bot.send_message(chat_id=CHAT_ID, text=f"❌ Error fetching {symbol}: {e}")
+                    continue
+
+            # انتظار دقيقة كاملة قبل التحقق من كل العملات مرة أخرى
+            await asyncio.sleep(60)
+
+# تشغيل البوت
 if __name__ == "__main__":
     asyncio.run(main())
