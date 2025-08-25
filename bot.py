@@ -1,67 +1,64 @@
 import os
-import asyncio
+import time
+import requests
 import pandas as pd
 import pandas_ta as ta
-import requests
 from telegram import Bot
+from dotenv import load_dotenv
 
-# ======================================
-# إعداد المتغيرات من environment
-# ======================================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-CMC_API_KEY = os.environ.get("CMC_API_KEY")
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+CMC_API_KEY = os.getenv("CMC_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# قائمة العملات (أو يمكن جلبها من CMC)
-COINS = ["BTC", "ETH", "ADA", "XRP", "SOL"]  # مثال، ضع 300 عملة حسب حاجتك
+# قائمة 300 عملة عامة (أمثلة)
+coins = [
+    'BTC', 'ETH', 'USDT', 'BNB', 'ADA', 'XRP', 'SOL', 'DOGE', 'DOT', 'AVAX',
+    'MATIC', 'SHIB', 'TRX', 'LTC', 'UNI', 'ATOM', 'LINK', 'XLM', 'ALGO', 'VET',
+    # ... أضف المزيد حتى تصل 300 رمز ...
+]
 
-# ======================================
-# دالة لجلب الأسعار من CoinMarketCap
-# ======================================
-async def fetch_price(symbol):
-    url = f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol={symbol}"
+def fetch_price(symbol):
+    url = f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
     headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
-    try:
-        r = requests.get(url, headers=headers, timeout=10).json()
-        price = r["data"][symbol]["quote"]["USD"]["price"]
+    params = {"symbol": symbol, "convert": "USD"}
+    r = requests.get(url, headers=headers, params=params).json()
+    data = r.get("data", {}).get(symbol)
+    if data:
+        price = data["quote"]["USD"]["price"]
         return price
-    except Exception as e:
-        await bot.send_message(chat_id=CHAT_ID, text=f"❌ Error fetching {symbol}: {e}")
-        return None
+    return None
 
-# ======================================
-# دالة لإرسال إشعارات EMA & RSI
-# ======================================
-async def check_alerts(symbol):
-    price = await fetch_price(symbol)
-    if price is None:
-        return
+def fetch_historical(symbol, limit=100):
+    # يمكنك استخدام بيانات وهمية إذا لم تتوفر API للتاريخ الكامل
+    # مثال: توليد بيانات عشوائية لتجربة EMA و RSI
+    prices = [fetch_price(symbol) for _ in range(limit)]
+    df = pd.DataFrame(prices, columns=["close"])
+    df.dropna(inplace=True)
+    return df
 
-    df = pd.DataFrame({"close": [price]})  # مثال مبسط على البيانات
-    try:
-        df["EMA10"] = ta.ema(df["close"], length=10)
-        df["EMA50"] = ta.ema(df["close"], length=50)
-        df["RSI"] = ta.rsi(df["close"], length=14)
+def check_alerts():
+    for coin in coins:
+        try:
+            df = fetch_historical(coin)
+            if df.empty or len(df) < 25:
+                continue
+            df['EMA7'] = ta.ema(df['close'], length=7)
+            df['EMA25'] = ta.ema(df['close'], length=25)
+            df['RSI'] = ta.rsi(df['close'], length=14)
 
-        ema_cross = df["EMA10"].iloc[-1] > df["EMA50"].iloc[-1]
-        rsi_condition = df["RSI"].iloc[-1] > 45
-
-        if ema_cross and rsi_condition:
-            await bot.send_message(chat_id=CHAT_ID, text=f"✅ {symbol} reached EMA cross + RSI>45")
-    except Exception as e:
-        await bot.send_message(chat_id=CHAT_ID, text=f"❌ Error processing {symbol}: {e}")
-
-# ======================================
-# دالة الفحص الدوري لكل العملات
-# ======================================
-async def main():
-    await bot.send_message(chat_id=CHAT_ID, text="🤖 Bot started (EMA & RSI alerts).")
-    while True:
-        tasks = [check_alerts(symbol) for symbol in COINS]
-        await asyncio.gather(*tasks)
-        await asyncio.sleep(60)  # تأخير 1 دقيقة بين الفحوصات
+            # شرط التقاطع صعودي و RSI >= 45
+            if df['EMA7'].iloc[-2] < df['EMA25'].iloc[-2] and df['EMA7'].iloc[-1] > df['EMA25'].iloc[-1]:
+                if df['RSI'].iloc[-1] >= 45:
+                    bot.send_message(chat_id=CHAT_ID, text=f"✅ {coin} EMA7 تقاطع فوق EMA25 و RSI={df['RSI'].iloc[-1]:.2f}")
+        except Exception as e:
+            bot.send_message(chat_id=CHAT_ID, text=f"❌ Error fetching {coin}: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    bot.send_message(chat_id=CHAT_ID, text="🤖 Bot started (300 coins + EMA & RSI alerts).")
+    while True:
+        check_alerts()
+        time.sleep(60)
