@@ -1,64 +1,79 @@
 import os
-import time
-import requests
+import asyncio
 import pandas as pd
 import pandas_ta as ta
+import requests
 from telegram import Bot
-from dotenv import load_dotenv
 
-load_dotenv()
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-CMC_API_KEY = os.getenv("CMC_API_KEY")
+# ==========================
+# المتغيرات من ملف env
+# ==========================
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
+CMC_API_KEY = os.environ.get("CMC_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# قائمة 300 عملة عامة (أمثلة)
-coins = [
-    'BTC', 'ETH', 'USDT', 'BNB', 'ADA', 'XRP', 'SOL', 'DOGE', 'DOT', 'AVAX',
-    'MATIC', 'SHIB', 'TRX', 'LTC', 'UNI', 'ATOM', 'LINK', 'XLM', 'ALGO', 'VET',
-    # ... أضف المزيد حتى تصل 300 رمز ...
+# ==========================
+# قائمة العملات (مثال عام 300 رمز)
+# ==========================
+COINS = [
+    "BTC", "ETH", "BNB", "XRP", "ADA", "SOL", "DOT", "DOGE", "AVAX", "MATIC",
+    # ضع باقي العملات هنا حتى تصل إلى 300
 ]
 
+# ==========================
+# دالة لجلب الأسعار من CoinMarketCap
+# ==========================
 def fetch_price(symbol):
-    url = f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
+    url = f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol={symbol}"
     headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
-    params = {"symbol": symbol, "convert": "USD"}
-    r = requests.get(url, headers=headers, params=params).json()
-    data = r.get("data", {}).get(symbol)
-    if data:
-        price = data["quote"]["USD"]["price"]
-        return price
-    return None
+    response = requests.get(url, headers=headers)
+    data = response.json()
+    price = data['data'][symbol]['quote']['USD']['price']
+    return price
 
-def fetch_historical(symbol, limit=100):
-    # يمكنك استخدام بيانات وهمية إذا لم تتوفر API للتاريخ الكامل
-    # مثال: توليد بيانات عشوائية لتجربة EMA و RSI
-    prices = [fetch_price(symbol) for _ in range(limit)]
-    df = pd.DataFrame(prices, columns=["close"])
-    df.dropna(inplace=True)
+# ==========================
+# دالة حساب المؤشرات
+# ==========================
+def calculate_indicators(df):
+    df['EMA7'] = ta.ema(df['close'], length=7)
+    df['EMA25'] = ta.ema(df['close'], length=25)
+    df['RSI'] = ta.rsi(df['close'], length=14)
     return df
 
-def check_alerts():
-    for coin in coins:
-        try:
-            df = fetch_historical(coin)
-            if df.empty or len(df) < 25:
-                continue
-            df['EMA7'] = ta.ema(df['close'], length=7)
-            df['EMA25'] = ta.ema(df['close'], length=25)
-            df['RSI'] = ta.rsi(df['close'], length=14)
+# ==========================
+# إرسال الإشعار بشكل async
+# ==========================
+async def send_alert(message):
+    await bot.send_message(chat_id=CHAT_ID, text=message)
 
-            # شرط التقاطع صعودي و RSI >= 45
-            if df['EMA7'].iloc[-2] < df['EMA25'].iloc[-2] and df['EMA7'].iloc[-1] > df['EMA25'].iloc[-1]:
-                if df['RSI'].iloc[-1] >= 45:
-                    bot.send_message(chat_id=CHAT_ID, text=f"✅ {coin} EMA7 تقاطع فوق EMA25 و RSI={df['RSI'].iloc[-1]:.2f}")
+# ==========================
+# فحص العملات وإرسال التنبيهات
+# ==========================
+async def check_coins():
+    for coin in COINS:
+        try:
+            price = fetch_price(coin)
+            # بيانات وهمية للـ dataframe (يمكنك تعديلها للـ API الحقيقية)
+            df = pd.DataFrame({'close': [price]*30})
+            df = calculate_indicators(df)
+
+            # شرط الإشعار
+            if df['EMA7'].iloc[-1] > df['EMA25'].iloc[-1] and df['RSI'].iloc[-1] >= 45:
+                await send_alert(f"✅ {coin}: EMA7 > EMA25 و RSI={df['RSI'].iloc[-1]:.2f}")
+
         except Exception as e:
-            bot.send_message(chat_id=CHAT_ID, text=f"❌ Error fetching {coin}: {e}")
+            await send_alert(f"❌ Error fetching {coin}: {e}")
+
+# ==========================
+# حلقة التشغيل المستمرة
+# ==========================
+async def main():
+    await send_alert("🤖 Bot started (300 coins + EMA & RSI alerts).")
+    while True:
+        await check_coins()
+        await asyncio.sleep(60)  # كل دقيقة
 
 if __name__ == "__main__":
-    bot.send_message(chat_id=CHAT_ID, text="🤖 Bot started (300 coins + EMA & RSI alerts).")
-    while True:
-        check_alerts()
-        time.sleep(60)
+    asyncio.run(main())
