@@ -1,90 +1,103 @@
-# bot.py
 import os
 import time
+import asyncio
 import requests
 import pandas as pd
 import pandas_ta as ta
 from telegram import Bot
 
-# إعداد متغيرات البيئة
+# ====== Environment variables ======
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CMC_API_KEY = os.getenv("CMC_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# قائمة 300 عملة رمزية عامة
+# ====== Coin list (300 coins) ======
 coins = [
-    "BTC","ETH","XRP","LTC","BCH","ADA","DOT","LINK","XLM","DOGE",
-    "UNI","SOL","MATIC","ATOM","VET","THETA","TRX","FIL","EOS","ALGO",
-    "XTZ","AAVE","KSM","NEO","DASH","ZEC","MKR","BAT","COMP","YFI",
-    "SNX","DCR","OMG","QTUM","LSK","NANO","ICX","ZIL","BTT","HOT",
-    "ENJ","KNC","REP","1INCH","CHZ","SUSHI","CRV","CAKE","FTM","HEGIC",
-    "STMX","MANA","GRT","ANKR","BAL","CVC","RUNE","OCEAN","NMR","KAVA",
-    "CELO","UMA","LRC","RVN","ARV","HNT","GLM","KSM","ALPHA","SRM",
-    "WAVES","ZEN","SC","COTI","CHSB","AR","FET","STORJ","CEL","XEM",
-    "IOTA","KMD","ONG","ONT","NEXO","PAX","VTHO","XVG","ICX","RVN",
-    "BNT","ZEN","DGB","XVS","CVX","FXS","MKR","RPL","INJ","API3",
-    "AKRO","MIR","SAND","AXS","THOR","LUNA","ANC","MITH","DODO","CEEK",
-    "WTC","RSR","REN","ZRX","UMA","STMX","RLC","KNC","SXP","FTT",
-    "YFII","OXT","NKN","MCO","REP","NMR","BAND","TWT","ANKR","FARM",
-    "LPT","GNO","SRM","REEF","HIVE","COTI","KAVA","TRB","FIS","POND",
-    "FX","PERP","ARDR","CVC","MITH","BTS","NULS","LBC","CRO","WAVES",
-    "SYS","IOST","STORJ","GALA","CTSI","REN","POLY","CELO","KLAY",
-    "MINA","GRT","COTI","AKRO","SUSHI","CRV","1INCH","UNI","BAL","YFI",
-    "AAVE","SNX","COMP","MKR","LINK","LRC","OMG","ZRX","BNT","KNC",
-    "REP","NMR","OCEAN","SXP","RSR","RUNE","NMR","DGB","FET","RVN",
-    "SC","ICX","BTT","VET","THETA","TRX","XTZ","ALGO","FIL","ATOM",
-    "MATIC","SOL","DOT","ADA","BCH","LTC","XRP","ETH","BTC","DOGE",
-    "AVAX","FTM","EGLD","NEAR","ONE","KSM","CELR","ANKR","CHZ","AR",
-    "CEL","HNT","GLM","ALPHA","SAND","AXS","MANA","FLOKI","LUNA2",
-    "GMT","PEOPLE","MASK","APT","OP","ARB","ENS","IMX","GODS","RNDR",
-    "APE","LOOKS","DYDX","GMX","STG","MAGIC","PEPE","KDA","IOTX","CVX",
-    "FXS","BAL","CRV","SUSHI","1INCH","LDO","RPL","INJ","API3","AKRO",
-    "MIR","ANC","ANCX","FARM","LPT","GNO","SRM","REEF","HIVE","COTI",
-    "KAVA","TRB","FIS","POND","FX","PERP","ARDR","CVC","MITH","BTS"
+    "BTC","ETH","BNB","XRP","ADA","SOL","DOGE","DOT","MATIC","LTC",
+    "TRX","AVAX","SHIB","UNI","ATOM","XLM","ETC","LINK","XMR","VET",
+    "FIL","EOS","AAVE","THETA","NEO","KSM","DASH","ZEC","MKR","COMP",
+    "SUSHI","YFI","OMG","BAT","ENJ","CHZ","QTUM","RVN","ONT","ICX",
+    "ALGO","CRO","NANO","DGB","ZIL","WAVES","HOT","STX","KAVA","CEL",
+    "SC","LRC","1INCH","ANKR","FTM","MANA","RUNE","OCEAN","GRT","CHSB",
+    "XEC","HNT","CELO","IOTX","KNC","GLM","RSR","SXP","REN","DENT",
+    "CVC","PAXG","SRM","BAL","NMR","COTI","LPT","BNT","UMA","WOO",
+    "AR","CVX","TRB","KLAY","RAY","API3","HARD","FET","ALPHA","STORJ",
+    "ROSE","FLOW","CHR","SKL","REQ","AKRO","OGN","TOMO","ORN","INJ",
+    "POLS","CTSI","POLY","BAND","FARM","MIR","FXS","SPELL","JST","ONE",
+    "RSV","GLMR","MOVR","RLC","AKT","XVG","REEF","TWT","ORN","ORN",
+    "ANKR","STMX","CTK","HIVE","LINA","SUN","STRAX","ATA","VGX","TOMO",
+    "UOS","NKN","OXT","TRIBE","RDN","AVA","IDEX","AKRO","PERP","KAI",
+    "NFTX","KP3R","DODO","FIO","CVNT","ORN","GNO","BAND","LPT","BTRST",
+    "SAND","AXS","THETA","ILV","ENS","GMX","LOOKS","DYDX","RLY","FXS",
+    "SPELL","APE","MAGIC","IMX","CRO","QNT","MINA","LDO","ANKR","KAVA",
+    "BTRST","GTC","FARM","1INCH","REN","SUSHI","AAVE","COMP","MKR","SNX",
+    "YFI","BAL","UMA","CRV","NMR","ALPHA","RUNE","FTM","TWT","CAKE",
+    "KSM","DOT","NEO","EOS","ADA","SOL","VET","THETA","MANA","CHZ",
+    "ENJ","SXP","NMR","GRT","RLC","OCEAN","REN","RSR","STORJ","WAVES",
+    "ZIL","HOT","CELO","IOTX","KNC","GLM","DENT","CVC","ANKR","FET",
+    "ALPHA","BNT","UMA","LRC","1INCH","TRB","API3","HARD","XEC","HNT",
+    "ROSE","CHR","SKL","REQ","AKRO","OGN","INJ","CTSI","POLY","BAND",
+    "FARM","MIR","FXS","SPELL","JST","ONE","RSV","GLMR","MOVR","AKT",
+    "XVG","REEF","TWT","ORN","STMX","CTK","HIVE","LINA","SUN","STRAX",
+    "ATA","VGX","UOS","NKN","OXT","TRIBE","RDN","AVA","IDEX","PERP",
+    "KAI","NFTX","KP3R","DODO","FIO","CVNT","GNO","BAND","LPT","BTRST",
+    "SAND","AXS","ILV","ENS","GMX","LOOKS","DYDX","RLY","FXS","SPELL",
+    "APE","MAGIC","IMX","CRO","QNT","MINA","LDO","ANKR","KAVA","BTRST",
+    "GTC","FARM","1INCH","REN","SUSHI","AAVE","COMP","MKR","SNX","YFI"
 ]
 
-CMC_HEADERS = {
-    "Accepts": "application/json",
-    "X-CMC_PRO_API_KEY": CMC_API_KEY
-}
-
-def fetch_price(symbol):
-    url = f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol={symbol}"
-    response = requests.get(url, headers=CMC_HEADERS, timeout=10).json()
-    if "data" in response and symbol in response["data"]:
-        return response["data"][symbol]["quote"]["USD"]["price"]
-    return None
-
+# ====== Function to fetch historical data ======
 def fetch_historical(symbol, limit=50):
-    url = f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/ohlcv/historical?symbol={symbol}&time_start=2023-01-01&interval=1d"
+    url = f"https://api.binance.com/api/v3/klines"
+    params = {"symbol": symbol + "USDT", "interval": "1m", "limit": limit}
     try:
-        response = requests.get(url, headers=CMC_HEADERS, timeout=10).json()
-        if "data" in response and "quotes" in response["data"]:
-            quotes = response["data"]["quotes"][-limit:]
-            df = pd.DataFrame([{"close": q["quote"]["USD"]["close"]} for q in quotes])
-            return df
-    except:
+        response = requests.get(url, params=params).json()
+        df = pd.DataFrame(response, columns=[
+            "Open_time","Open","High","Low","Close","Volume",
+            "Close_time","Quote_asset_volume","Number_of_trades",
+            "Taker_buy_base","Taker_buy_quote","Ignore"
+        ])
+        df["Close"] = df["Close"].astype(float)
+        return df
+    except Exception as e:
+        asyncio.run(bot.send_message(chat_id=CHAT_ID, text=f"❌ Error fetching historical for {symbol}: {e}"))
         return None
-    return None
 
-def check_signals(symbol):
-    df = fetch_historical(symbol)
-    if df is None or df.empty:
-        return
-    df["EMA7"] = ta.ema(df["close"], length=7)
-    df["EMA25"] = ta.ema(df["close"], length=25)
-    df["RSI"] = ta.rsi(df["close"], length=14)
-    if df["EMA7"].iloc[-2] < df["EMA25"].iloc[-2] and df["EMA7"].iloc[-1] > df["EMA25"].iloc[-1]:
-        if df["RSI"].iloc[-1] >= 45:
-            bot.send_message(chat_id=CHAT_ID, text=f"✅ {symbol} crossed EMA7>EMA25 & RSI={df['RSI'].iloc[-1]:.2f}")
+# ====== Function to check EMA & RSI conditions ======
+def check_conditions(df, symbol):
+    df["EMA7"] = ta.ema(df["Close"], length=7)
+    df["EMA25"] = ta.ema(df["Close"], length=25)
+    df["RSI"] = ta.rsi(df["Close"], length=14)
 
-while True:
-    for coin in coins:
-        try:
-            check_signals(coin)
-        except Exception as e:
-            # تجاهل الأخطاء وعدم إرسال إشعار عند الخطأ
-            pass
-    time.sleep(60)
+    if len(df) < 2:
+        return False
+
+    ema_cross = df["EMA7"].iloc[-2] <= df["EMA25"].iloc[-2] and df["EMA7"].iloc[-1] > df["EMA25"].iloc[-1]
+    rsi_condition = df["RSI"].iloc[-1] >= 45
+
+    if ema_cross and rsi_condition:
+        return True
+    return False
+
+# ====== Main loop ======
+async def main():
+    await bot.send_message(chat_id=CHAT_ID, text="🤖 Bot started (300 coins + EMA & RSI alerts).")
+    while True:
+        for symbol in coins:
+            df = fetch_historical(symbol)
+            if df is None:
+                continue
+            if check_conditions(df, symbol):
+                msg = f"✅ {symbol} EMA7 crossed above EMA25 and RSI >= 45"
+                await bot.send_message(chat_id=CHAT_ID, text=msg)
+                print(msg)
+            else:
+                print(f"Checked {symbol}, conditions not met.")
+            time.sleep(1)
+        print("Batch scan done. Waiting 60s...")
+        await asyncio.sleep(60)
+
+if __name__ == "__main__":
+    asyncio.run(main())
