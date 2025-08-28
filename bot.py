@@ -1,103 +1,92 @@
 import os
 import time
-import asyncio
+import requests
 import pandas as pd
 import pandas_ta as ta
-import requests
 import matplotlib.pyplot as plt
 from io import BytesIO
 from telegram import Bot
 
-# ===========================
-# إعداد المتغيرات من البيئة
-# ===========================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-CMC_API_KEY = os.environ.get("CMC_API_KEY")
+# ==== المتغيرات البيئية ====
+CMC_API_KEY = os.getenv("CMC_API_KEY")      # مفتاح CoinMarketCap
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# ===========================
-# أفضل 200 عملة ميم (تجنب التكرار)
-# ===========================
+# ==== قائمة أفضل 200 عملة ميم (رموز) ====
 MEME_COINS = [
-    "DOGE","SHIB","PEPE","FLUF","ELON","AKITA","KISHU","SAFE","SAMO",
-    "MONA","CULT","WOJ","HOGE","PIG","BABYDOGE","MIST","HOKK","KAWA",
-    "SHIBX","FLOKI","SMILE","BONE","LEASH","KISHUINU","POM","HUSKY",
-    # ... أكمل بقية الرموز حتى تصل 200 رمز ...
+    "SHIB","DOGE","PEPE","FLOKI","AKITA","KISHU","HOGE","ELON","SAMO","MONA",
+    "BABYDOGE","SANTOS","MOON","CATE","DOGEZ","WOOFY","DOG","PIG","KONG","DOGGY",
+    # ... أكمل حتى 200 رمز
 ]
 
-# ===========================
-# دالة جلب الأسعار
-# ===========================
+# ==== الإعدادات العامة ====
+CMC_URL = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
+HEADERS = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
+
+CHECK_INTERVAL = 15 * 60  # 15 دقيقة
+
 def fetch_price(symbol):
-    url = f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
-    headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
-    params = {"symbol": symbol, "convert": "USD"}
     try:
-        response = requests.get(url, headers=headers, params=params).json()
-        price = response["data"][symbol]["quote"]["USD"]["price"]
+        params = {"symbol": symbol, "convert": "USD"}
+        response = requests.get(CMC_URL, headers=HEADERS, params=params)
+        data = response.json()
+        price = data['data'][symbol]['quote']['USD']['price']
         return price
     except Exception as e:
         print(f"Error fetching {symbol}: {e}")
         return None
 
-# ===========================
-# دالة إنشاء الشارت
-# ===========================
-def create_chart(df, symbol):
-    plt.figure(figsize=(10,5))
-    plt.plot(df['close'], label='Close Price')
-    plt.plot(df['EMA50'], label='EMA50')
-    plt.plot(df['EMA200'], label='EMA200')
-    plt.title(f"{symbol} Chart")
+def check_indicators(symbol):
+    price = fetch_price(symbol)
+    if price is None:
+        return None
+
+    # لإنشاء DataFrame وهمي لتوضيح EMA و RSI
+    # في حال أردت بيانات تاريخية حقيقية، يجب جلب OHLC من API آخر
+    df = pd.DataFrame({"close": [price]*250})
+    df["EMA50"] = ta.ema(df["close"], length=50)
+    df["EMA200"] = ta.ema(df["close"], length=200)
+    df["RSI"] = ta.rsi(df["close"], length=14)
+    
+    ema50 = df["EMA50"].iloc[-1]
+    ema200 = df["EMA200"].iloc[-1]
+    rsi = df["RSI"].iloc[-1]
+
+    if price > ema50 and price > ema200 and rsi >= 40:
+        return df
+    return None
+
+def send_alert(symbol, df):
+    plt.figure(figsize=(6,4))
+    plt.plot(df["close"], label="Price")
+    plt.plot(df["EMA50"], label="EMA50")
+    plt.plot(df["EMA200"], label="EMA200")
+    plt.title(symbol)
     plt.legend()
     buf = BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format="png")
     buf.seek(0)
     plt.close()
-    return buf
+    bot.send_photo(chat_id=CHAT_ID, photo=buf, caption=f"✅ {symbol} met conditions!\nPrice above EMA50 & EMA200, RSI≥40")
 
-# ===========================
-# فحص كل عملة
-# ===========================
-async def check_coin(symbol):
-    try:
-        # جلب آخر 200 سعر افتراضي
-        prices = []
-        for i in range(200):
-            price = fetch_price(symbol)
-            if price:
-                prices.append(price)
-            time.sleep(1)
-        df = pd.DataFrame(prices, columns=['close'])
-        df['EMA50'] = ta.ema(df['close'], length=50)
-        df['EMA200'] = ta.ema(df['close'], length=200)
-        df['RSI'] = ta.rsi(df['close'], length=14)
+def main():
+    bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} meme coins + EMA/RSI alerts + charts).")
+    print(f"Bot started with {len(MEME_COINS)} meme coins.")
 
-        # تحقق الشرط
-        if df['EMA50'].iloc[-1] > df['EMA200'].iloc[-1] and df['RSI'].iloc[-1] >= 40:
-            chart = create_chart(df, symbol)
-            await bot.send_photo(chat_id=CHAT_ID, photo=chart,
-                                 caption=f"✅ {symbol} meets conditions:\nEMA50 > EMA200\nRSI: {df['RSI'].iloc[-1]:.2f}")
-        else:
-            print(f"{symbol} conditions not met.")
-    except Exception as e:
-        print(f"Error processing {symbol}: {e}")
-
-# ===========================
-# دالة رئيسية للتشغيل المستمر
-# ===========================
-async def main():
-    await bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} meme coins + EMA/RSI alerts + charts).")
     while True:
-        tasks = [check_coin(symbol) for symbol in MEME_COINS]
-        await asyncio.gather(*tasks)
-        print("Waiting 15 minutes for next check...")
-        await asyncio.sleep(900)  # 15 دقيقة
+        for coin in MEME_COINS:
+            df = check_indicators(coin)
+            if df is not None:
+                try:
+                    send_alert(coin, df)
+                except Exception as e:
+                    print(f"Error sending alert for {coin}: {e}")
+            else:
+                print(f"Checked {coin}, conditions not met.")
+        print(f"Waiting {CHECK_INTERVAL//60} minutes for next check...")
+        time.sleep(CHECK_INTERVAL)
 
-# ===========================
-# تشغيل البوت
-# ===========================
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
