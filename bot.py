@@ -1,4 +1,5 @@
 import os
+import asyncio
 import requests
 import pandas as pd
 import pandas_ta as ta
@@ -6,81 +7,87 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 from telegram import Bot
 
-# إعداد المتغيرات من البيئة
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHAT_ID = os.getenv('CHAT_ID')
-CMC_API_KEY = os.getenv('CMC_API_KEY')
-
+# ======= إعداد المتغيرات =======
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 bot = Bot(token=TELEGRAM_TOKEN)
 
-HEADERS = {'X-CMC_PRO_API_KEY': CMC_API_KEY, 'Accept': 'application/json'}
-CMC_URL = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest'
-
-# جلب أفضل 200 عملة ميم
+# ======= جلب أفضل 200 عملة ميم من CoinGecko =======
 def get_top_meme_coins():
-    params = {'limit': 200, 'sort':'market_cap'}
-    response = requests.get(CMC_URL, headers=HEADERS, params=params)
-    data = response.json().get('data', [])
-    meme_coins = [coin['symbol'] for coin in data if 'meme' in coin.get('tags', [])]
-    return meme_coins
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {
+        "vs_currency": "usd",
+        "order": "market_cap_desc",
+        "per_page": 250,
+        "page": 1,
+        "sparkline": "false"
+    }
+    response = requests.get(url, params=params)
+    data = response.json()
+    
+    meme_coins = [coin['id'] for coin in data if 'meme' in coin.get('symbol','').lower() or 'doge' in coin['id'] or 'shiba' in coin['id']]
+    return meme_coins[:200]
 
 MEME_COINS = get_top_meme_coins()
-print(f"Loaded {len(MEME_COINS)} meme coins.")
 
-# دالة لجلب بيانات الأسعار (الـ OHLC) لكل عملة
-def get_ohlc(symbol, convert='USD', limit=100):
-    url = f'https://pro-api.coinmarketcap.com/v1/cryptocurrency/ohlcv/latest'
-    params = {'symbol': symbol, 'convert': convert, 'timeframe':'1d', 'count':limit}
-    try:
-        response = requests.get(url, headers=HEADERS, params=params)
-        data = response.json().get('data', {}).get('quotes', [])
-        df = pd.DataFrame([{
-            'close': q['quote'][convert]['close'],
-            'open': q['quote'][convert]['open'],
-            'high': q['quote'][convert]['high'],
-            'low': q['quote'][convert]['low']
-        } for q in data])
+# ======= إشعار بدء البوت =======
+async def send_start_message():
+    await bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} meme coins + EMA/RSI alerts + charts).")
+
+# ======= جلب البيانات التاريخية =======
+def fetch_price_data(coin_id):
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+    params = {"vs_currency": "usd", "days": "30", "interval": "hourly"}
+    resp = requests.get(url, params=params).json()
+    prices = resp.get("prices")
+    if prices:
+        df = pd.DataFrame(prices, columns=["timestamp", "price"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         return df
-    except Exception as e:
-        print(f"Error fetching {symbol}: {e}")
-        return None
+    return None
 
-# دالة لإنشاء الرسم البياني وإرجاعه كصورة
-def plot_chart(df, symbol):
+# ======= توليد الشارت =======
+def generate_chart(df, coin_id):
+    df["EMA50"] = ta.ema(df["price"], length=50)
+    df["EMA200"] = ta.ema(df["price"], length=200)
+    df["RSI"] = ta.rsi(df["price"], length=14)
+    
     plt.figure(figsize=(10,5))
-    plt.plot(df['close'], label='Close')
-    plt.plot(df['close'].ta.ema(50), label='EMA50')
-    plt.plot(df['close'].ta.ema(200), label='EMA200')
-    plt.title(f'{symbol} Price Chart')
+    plt.plot(df["timestamp"], df["price"], label="Price", color="blue")
+    plt.plot(df["timestamp"], df["EMA50"], label="EMA50", color="orange")
+    plt.plot(df["timestamp"], df["EMA200"], label="EMA200", color="red")
+    plt.title(f"{coin_id.upper()} Price Chart")
     plt.legend()
+    
     buf = BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format="png")
     buf.seek(0)
     plt.close()
     return buf
 
-# التحقق من الشروط وإرسال إشعار
-for symbol in MEME_COINS:
-    df = get_ohlc(symbol)
-    if df is None or df.empty:
-        continue
-    ema50 = df['close'].ta.ema(50).iloc[-1]
-    ema200 = df['close'].ta.ema(200).iloc[-1]
-    rsi = df['close'].ta.rsi(14).iloc[-1]
-    current_price = df['close'].iloc[-1]
+# ======= التحقق من شروط EMA/RSI =======
+async def check_conditions():
+    for coin in MEME_COINS:
+        df = fetch_price_data(coin)
+        if df is None or df.empty:
+            continue
+        df["EMA50"] = ta.ema(df["price"], length=50)
+        df["EMA200"] = ta.ema(df["price"], length=200)
+        df["RSI"] = ta.rsi(df["price"], length=14)
+        
+        if df["price"].iloc[-1] > df["EMA200"].iloc[-1] and df["EMA50"].iloc[-1] > df["EMA200"].iloc[-1] and df["RSI"].iloc[-1] > 40:
+            chart_buf = generate_chart(df, coin)
+            await bot.send_photo(chat_id=CHAT_ID, photo=chart_buf, caption=f"✅ {coin.upper()} meets EMA/RSI conditions!")
 
-    if current_price > ema200 and current_price > ema50 and rsi >= 40:
-        chart_img = plot_chart(df, symbol)
+# ======= الحلقة الرئيسية =======
+async def main_loop():
+    await send_start_message()
+    while True:
         try:
-            bot.send_photo(chat_id=CHAT_ID, photo=chart_img, caption=f"✅ {symbol} meets conditions\nPrice: {current_price}\nEMA50: {ema50}\nEMA200: {ema200}\nRSI: {rsi}")
-            print(f"Alert sent for {symbol}")
+            await check_conditions()
         except Exception as e:
-            print(f"Error sending alert for {symbol}: {e}")
-    else:
-        print(f"Checked {symbol}, conditions not met.")
+            await bot.send_message(chat_id=CHAT_ID, text=f"❌ Error: {e}")
+        await asyncio.sleep(3600)  # كل ساعة
 
-# إشعار بداية البوت
-try:
-    bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} meme coins + EMA/RSI alerts + charts).")
-except Exception as e:
-    print(f"Error sending start message: {e}")
+if __name__ == "__main__":
+    asyncio.run(main_loop())
