@@ -1,95 +1,97 @@
 import os
-import asyncio
-import requests
+import time
+import io
 import pandas as pd
 import pandas_ta as ta
+import requests
 import matplotlib.pyplot as plt
-from io import BytesIO
 from telegram import Bot
 
-# البيئة
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# --- إعداد المتغيرات من env ---
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# جلب أفضل 200 عملة ميم من CoinGecko
-def get_top_meme_coins():
-    url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {
-        "vs_currency": "usd",
-        "order": "market_cap_desc",
-        "per_page": 250,
-        "page": 1,
-        "sparkline": False,
-    }
-    resp = requests.get(url, params=params).json()
-    meme_coins = [coin['id'] for coin in resp if 'meme' in coin.get('categories',[])]
-    return meme_coins[:200]  # أعلى 200
+# --- جلب أفضل العملات الميمية من CoinGecko (200 عملة) ---
+def get_top_meme_coins(limit=200):
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/markets"
+        params = {
+            "vs_currency": "usd",
+            "order": "market_cap_desc",
+            "per_page": limit,
+            "page": 1,
+            "sparkline": False
+        }
+        response = requests.get(url, params=params)
+        coins = response.json()
+        meme_coins = [coin['id'] for coin in coins if 'meme' in coin.get('categories', []) or 'meme' in coin.get('name','').lower()]
+        return meme_coins
+    except Exception as e:
+        print(f"Error fetching meme coins: {e}")
+        return []
 
 MEME_COINS = get_top_meme_coins()
+print(f"Loaded {len(MEME_COINS)} meme coins.")
 
-async def send_start_message():
-    await bot.send_message(
-        chat_id=CHAT_ID,
-        text=f"🤖 Bot started ({len(MEME_COINS)} meme coins + EMA/RSI alerts + charts)."
-    )
-
-# جلب بيانات الأسعار
-def fetch_price_data(coin_id):
+# --- دالة جلب البيانات التاريخية ---
+def get_historical_data(coin_id, days=60):
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-    params = {"vs_currency": "usd", "days": "30", "interval": "1h"}
-    resp = requests.get(url, params=params).json()
-    prices = resp.get("prices")
-    if not prices:
-        return None
-    df = pd.DataFrame(prices, columns=["timestamp", "price"])
-    df['price'] = pd.to_numeric(df['price'])
+    params = {"vs_currency": "usd", "days": days}
+    r = requests.get(url, params=params)
+    data = r.json()
+    prices = [p[1] for p in data.get('prices', [])]
+    df = pd.DataFrame(prices, columns=['close'])
     return df
 
-# رسم chart
-def generate_chart(df, coin):
-    df['EMA50'] = df['price'].ewm(span=50, adjust=False).mean()
-    df['EMA200'] = df['price'].ewm(span=200, adjust=False).mean()
-    df['RSI'] = ta.rsi(df['price'], length=14)
-
+# --- دالة إنشاء الشارت ---
+def plot_chart(df, coin_id):
     plt.figure(figsize=(10,5))
-    plt.plot(df['price'], label='Price')
-    plt.plot(df['EMA50'], label='EMA50')
-    plt.plot(df['EMA200'], label='EMA200')
-    plt.title(f"{coin} Price Chart")
+    plt.plot(df['close'], label='Close Price')
+    plt.title(f"{coin_id.upper()} Price Chart")
+    plt.xlabel('Time')
+    plt.ylabel('Price (USD)')
     plt.legend()
-    buf = BytesIO()
+    buf = io.BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
     plt.close()
     return buf
 
-# تحقق من الشروط
-async def check_coin(coin_id):
-    df = fetch_price_data(coin_id)
-    if df is None or df.empty:
-        return
-    df['EMA50'] = df['price'].ewm(span=50, adjust=False).mean()
-    df['EMA200'] = df['price'].ewm(span=200, adjust=False).mean()
-    df['RSI'] = ta.rsi(df['price'], length=14)
-    
-    # تحقق من الشرط على آخر سعر
-    last = df.iloc[-1]
-    if last['price'] > last['EMA200'] and last['price'] > last['EMA50'] and last['RSI'] >= 40:
-        chart_img = generate_chart(df, coin_id)
-        await bot.send_photo(chat_id=CHAT_ID, photo=chart_img, caption=f"✅ {coin_id.upper()} met the condition!")
+# --- تنفيذ البوت ---
+def run_bot():
+    try:
+        bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} meme coins + EMA/RSI alerts + charts).")
+    except Exception as e:
+        print(f"Failed to send start message: {e}")
 
-# الحلقة الرئيسية
-async def main_loop():
-    await send_start_message()
     while True:
-        for coin in MEME_COINS:
+        for coin_id in MEME_COINS:
             try:
-                await check_coin(coin)
+                df = get_historical_data(coin_id)
+                if df.empty or len(df) < 50:
+                    print(f"Not enough data for {coin_id}.")
+                    continue
+
+                df['EMA50'] = ta.ema(df['close'], length=50)
+                df['EMA200'] = ta.ema(df['close'], length=200)
+                df['RSI'] = ta.rsi(df['close'], length=14)
+
+                latest = df.iloc[-1]
+                if latest['close'] > latest['EMA50'] and latest['close'] > latest['EMA200'] and latest['RSI'] >= 40:
+                    chart_buf = plot_chart(df, coin_id)
+                    bot.send_photo(
+                        chat_id=CHAT_ID,
+                        photo=chart_buf,
+                        caption=f"✅ {coin_id.upper()} met conditions:\nPrice: {latest['close']:.4f}\nEMA50: {latest['EMA50']:.4f}\nEMA200: {latest['EMA200']:.4f}\nRSI: {latest['RSI']:.2f}"
+                    )
+                    print(f"Alert sent for {coin_id}.")
+                else:
+                    print(f"Checked {coin_id}, conditions not met.")
             except Exception as e:
-                print(f"Error checking {coin}: {e}")
-        await asyncio.sleep(60*5)  # تحقق كل 5 دقائق
+                print(f"Error checking {coin_id}: {e}")
+        time.sleep(300)  # كل 5 دقائق
 
 if __name__ == "__main__":
-    asyncio.run(main_loop())
+    run_bot()
