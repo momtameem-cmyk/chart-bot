@@ -1,97 +1,93 @@
 import os
-import time
-import io
+import requests
 import pandas as pd
 import pandas_ta as ta
-import requests
 import matplotlib.pyplot as plt
+from io import BytesIO
 from telegram import Bot
+import time
 
-# --- إعداد المتغيرات من env ---
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
+# قراءة المفاتيح من env
+COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# --- جلب أفضل العملات الميمية من CoinGecko (200 عملة) ---
+headers = {
+    "X-CMC_PRO_API_KEY": COINMARKETCAP_API_KEY,
+    "Accepts": "application/json"
+}
+
+# جلب أفضل 200 عملة ميم
 def get_top_meme_coins(limit=200):
+    url = f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?limit=500"
+    response = requests.get(url, headers=headers)
+    data = response.json()
+    meme_coins = [coin['symbol'] for coin in data.get('data', []) if 'meme' in coin.get('tags',[])]
+    return meme_coins[:limit]
+
+# جلب البيانات التاريخية مرة واحدة لكل العملة
+def get_historical_prices(symbol):
+    url = f"https://pro-api.coinmarketcap.com/v2/cryptocurrency/ohlcv/historical"
+    params = {"symbol": symbol, "interval": "daily", "count": 200}
     try:
-        url = "https://api.coingecko.com/api/v3/coins/markets"
-        params = {
-            "vs_currency": "usd",
-            "order": "market_cap_desc",
-            "per_page": limit,
-            "page": 1,
-            "sparkline": False
-        }
-        response = requests.get(url, params=params)
-        coins = response.json()
-        meme_coins = [coin['id'] for coin in coins if 'meme' in coin.get('categories', []) or 'meme' in coin.get('name','').lower()]
-        return meme_coins
+        response = requests.get(url, headers=headers, params=params).json()
+        quotes = response.get('data', {}).get('quotes', [])
+        prices = [float(q['quote']['USD']['close']) for q in quotes]
+        return prices
     except Exception as e:
-        print(f"Error fetching meme coins: {e}")
+        print(f"Error fetching {symbol}: {e}")
         return []
 
-MEME_COINS = get_top_meme_coins()
-print(f"Loaded {len(MEME_COINS)} meme coins.")
-
-# --- دالة جلب البيانات التاريخية ---
-def get_historical_data(coin_id, days=60):
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-    params = {"vs_currency": "usd", "days": days}
-    r = requests.get(url, params=params)
-    data = r.json()
-    prices = [p[1] for p in data.get('prices', [])]
+# حساب EMA و RSI
+def calculate_indicators(prices):
     df = pd.DataFrame(prices, columns=['close'])
+    df['EMA50'] = df['close'].ewm(span=50, adjust=False).mean()
+    df['EMA200'] = df['close'].ewm(span=200, adjust=False).mean()
+    df['RSI'] = ta.rsi(df['close'], length=14)
     return df
 
-# --- دالة إنشاء الشارت ---
-def plot_chart(df, coin_id):
+# إنشاء شارت
+def create_chart(df, symbol):
     plt.figure(figsize=(10,5))
-    plt.plot(df['close'], label='Close Price')
-    plt.title(f"{coin_id.upper()} Price Chart")
-    plt.xlabel('Time')
-    plt.ylabel('Price (USD)')
+    plt.plot(df['close'], label='Close')
+    plt.plot(df['EMA50'], label='EMA50')
+    plt.plot(df['EMA200'], label='EMA200')
+    plt.title(symbol)
     plt.legend()
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
+    buffer = BytesIO()
+    plt.savefig(buffer, format='png')
+    buffer.seek(0)
     plt.close()
-    return buf
+    return buffer
 
-# --- تنفيذ البوت ---
-def run_bot():
+# التحقق من كل عملة وإرسال إشعار فقط عند تحقق الشرط
+def check_and_alert(MEME_COINS):
+    for symbol in MEME_COINS:
+        prices = get_historical_prices(symbol)
+        if len(prices) < 50:
+            continue
+        df = calculate_indicators(prices)
+        if df['close'].iloc[-1] > df['EMA200'].iloc[-1] and df['close'].iloc[-1] > df['EMA50'].iloc[-1] and df['RSI'].iloc[-1] > 40:
+            chart = create_chart(df, symbol)
+            try:
+                bot.send_photo(chat_id=CHAT_ID, photo=chart, caption=f"✅ {symbol} meets the conditions.\nPrice: {df['close'].iloc[-1]:.4f}")
+                print(f"{symbol}: Alert sent.")
+            except Exception as e:
+                print(f"Error sending alert for {symbol}: {e}")
+        else:
+            print(f"{symbol}: conditions not met.")
+
+if __name__ == "__main__":
+    MEME_COINS = get_top_meme_coins()
+    print(f"Loaded {len(MEME_COINS)} meme coins.")
     try:
         bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} meme coins + EMA/RSI alerts + charts).")
     except Exception as e:
-        print(f"Failed to send start message: {e}")
+        print(f"Error sending start message: {e}")
 
     while True:
-        for coin_id in MEME_COINS:
-            try:
-                df = get_historical_data(coin_id)
-                if df.empty or len(df) < 50:
-                    print(f"Not enough data for {coin_id}.")
-                    continue
-
-                df['EMA50'] = ta.ema(df['close'], length=50)
-                df['EMA200'] = ta.ema(df['close'], length=200)
-                df['RSI'] = ta.rsi(df['close'], length=14)
-
-                latest = df.iloc[-1]
-                if latest['close'] > latest['EMA50'] and latest['close'] > latest['EMA200'] and latest['RSI'] >= 40:
-                    chart_buf = plot_chart(df, coin_id)
-                    bot.send_photo(
-                        chat_id=CHAT_ID,
-                        photo=chart_buf,
-                        caption=f"✅ {coin_id.upper()} met conditions:\nPrice: {latest['close']:.4f}\nEMA50: {latest['EMA50']:.4f}\nEMA200: {latest['EMA200']:.4f}\nRSI: {latest['RSI']:.2f}"
-                    )
-                    print(f"Alert sent for {coin_id}.")
-                else:
-                    print(f"Checked {coin_id}, conditions not met.")
-            except Exception as e:
-                print(f"Error checking {coin_id}: {e}")
-        time.sleep(300)  # كل 5 دقائق
-
-if __name__ == "__main__":
-    run_bot()
+        check_and_alert(MEME_COINS)
+        print("Waiting 15 minutes for next check...")
+        time.sleep(900)  # 900 ثانية = 15 دقيقة
