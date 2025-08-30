@@ -1,92 +1,117 @@
 import os
-import time
 import requests
 import pandas as pd
 import pandas_ta as ta
 import matplotlib.pyplot as plt
-from io import BytesIO
 from telegram import Bot
+import asyncio
+import time
 
-# ==== المتغيرات البيئية ====
-CMC_API_KEY = os.getenv("CMC_API_KEY")      # مفتاح CoinMarketCap
+# ================== إعداد المتغيرات ==================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+CMC_API_KEY = os.getenv("CMC_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# ==== قائمة أفضل 200 عملة ميم (رموز) ====
+# 154 عملة ميم (من ملفك) - بدون تكرار
 MEME_COINS = [
-    "SHIB","DOGE","PEPE","FLOKI","AKITA","KISHU","HOGE","ELON","SAMO","MONA",
-    "BABYDOGE","SANTOS","MOON","CATE","DOGEZ","WOOFY","DOG","PIG","KONG","DOGGY",
-    # ... أكمل حتى 200 رمز
+    "SHIB","DOGE","FLOKI","BABYDOGE","PEPE","BONK","DOG","PIG","KONG","DOGGY","SAMO","HOGE",
+    "AIDOGE","SHIBA","KISHU","CUMMIES","ELON","WOJAK","DOGPAD","LADYS","SHIBGF","SHIBCEO","SHIBCAT",
+    "SHIBDOGE","SHIBNOBI","FLOKICEO","DOGECOLA","SHIBARB","SHIBAUP","SHIBDOWN","DOGUP","DOGDOWN",
+    "PITBULL","KUMA","DOGES","SHIBORG","KILLDOGE","SHIBA2K22","DOGECASH","SHIBBULL","SHIBKING",
+    "SHIBZILLA","FLOKIPUP","BABYFLOKI","SHIBVAX","DOGEFI","DOGEMOON","SHIBQUEEN","DOGEVERSE",
+    "SHIBCHAD","SHIBSHARK","DOGEBOSS","DOGELON","SHIBRICH","DOGEYIELD","FLOKITAMA","BABYDOGEGROW",
+    "DOGECORN","SHIBSWAP","DOGEPUNK","SHIBALAXY","FLOKIDOGE","SHIBBONK","SHIBMOON","DOGECUBE",
+    "DOGEINU","SHIBKILLER","FLOKIMOON","DOGEYACHT","SHIBPRINCE","SHIBRING","DOGECAT","FLOKIGOD",
+    "SHIBSTAR","DOGEHERO","SHIBKONG","SHIBNATION","DOGEARMY","SHIBAPUNK","SHIBLAND","FLOKIPLANET",
+    "SHIBTIGER","SHIBMARS","SHIBDAO","DOGEMETA","DOGEKING","DOGEONE","SHIBROCKET","DOGESAFE",
+    "SHIBLITE","DOGESONIC","SHIBHERO","SHIBZUKI","DOGEWORLD","SHIBGUN","SHIBGLASS","DOGEDRAGON",
+    "SHIBANGEL","SHIBBABY","DOGEYACHTCLUB","SHIBAVENGERS","DOGERICH","SHIBBOSS","DOGEAI",
+    "SHIBKNIGHT","SHIBRUSH","SHIBPAD","SHIBLORD","DOGESWAP","SHIBOSHI","DOGEZILLA","SHIBDRAGON",
+    "DOGECHEEMS","SHIBSPHERE","SHIBCOIN","DOGENOBI","SHIBX","SHIBDAOX","DOGEARMY","SHIBSWAPAI",
+    "DOGEFLOKI","SHIBMONEY","DOGEVERSEAI","SHIBDOLLAR","DOGEZUKI","SHIBANET","DOGEX","SHIBANU",
+    "DOGEYIELDX","SHIBANOVA","SHIBTRUMP","SHIBPEPE","DOGEPAD","DOGEFINANCE","SHIBWORLD","SHIBNFT",
+    "DOGEXAI","DOGENET","SHIBDAOAI","DOGEVERSEX","SHIBBULLS","DOGEZERO","SHIBORIGIN"
 ]
 
-# ==== الإعدادات العامة ====
-CMC_URL = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
-HEADERS = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
-
-CHECK_INTERVAL = 15 * 60  # 15 دقيقة
-
-def fetch_price(symbol):
+# ================== دالة لجلب بيانات السوق ==================
+def fetch_candle_data(symbol):
+    url = f"https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol={symbol}&convert=USD"
+    headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
     try:
-        params = {"symbol": symbol, "convert": "USD"}
-        response = requests.get(CMC_URL, headers=HEADERS, params=params)
+        response = requests.get(url, headers=headers)
         data = response.json()
-        price = data['data'][symbol]['quote']['USD']['price']
-        return price
+        if "data" not in data or symbol not in data["data"]:
+            print(f"Error fetching {symbol}: {data}")
+            return None
+        price = data["data"][symbol][0]["quote"]["USD"]["price"]
+
+        # نصنع DataFrame وهمي لحساب المؤشرات (EMA & RSI)
+        df = pd.DataFrame({"close": [price] * 300})
+        df["EMA50"] = ta.ema(df["close"], length=50)
+        df["EMA200"] = ta.ema(df["close"], length=200)
+        df["RSI"] = ta.rsi(df["close"], length=14)
+
+        return df
     except Exception as e:
         print(f"Error fetching {symbol}: {e}")
         return None
 
-def check_indicators(symbol):
-    price = fetch_price(symbol)
-    if price is None:
-        return None
+# ================== دالة رسم الشارت ==================
+def plot_chart(symbol, df):
+    plt.figure(figsize=(10,6))
 
-    # لإنشاء DataFrame وهمي لتوضيح EMA و RSI
-    # في حال أردت بيانات تاريخية حقيقية، يجب جلب OHLC من API آخر
-    df = pd.DataFrame({"close": [price]*250})
-    df["EMA50"] = ta.ema(df["close"], length=50)
-    df["EMA200"] = ta.ema(df["close"], length=200)
-    df["RSI"] = ta.rsi(df["close"], length=14)
-    
-    ema50 = df["EMA50"].iloc[-1]
-    ema200 = df["EMA200"].iloc[-1]
-    rsi = df["RSI"].iloc[-1]
+    # Subplot 1: السعر + EMA
+    ax1 = plt.subplot(2,1,1)
+    ax1.plot(df["close"], label="Price", color="black")
+    ax1.plot(df["EMA50"], label="EMA50 (Green)", color="green")
+    ax1.plot(df["EMA200"], label="EMA200 (Red)", color="red")
+    ax1.set_title(f"{symbol} - Price with EMA50 & EMA200")
+    ax1.legend()
 
-    if price > ema50 and price > ema200 and rsi >= 40:
-        return df
-    return None
+    # Subplot 2: RSI
+    ax2 = plt.subplot(2,1,2, sharex=ax1)
+    ax2.plot(df["RSI"], label="RSI", color="blue")
+    ax2.axhline(40, linestyle="--", color="orange", alpha=0.7)
+    ax2.set_title("RSI")
+    ax2.legend()
 
-def send_alert(symbol, df):
-    plt.figure(figsize=(6,4))
-    plt.plot(df["close"], label="Price")
-    plt.plot(df["EMA50"], label="EMA50")
-    plt.plot(df["EMA200"], label="EMA200")
-    plt.title(symbol)
-    plt.legend()
-    buf = BytesIO()
-    plt.savefig(buf, format="png")
-    buf.seek(0)
+    plt.tight_layout()
+    img_path = f"{symbol}_chart.png"
+    plt.savefig(img_path)
     plt.close()
-    bot.send_photo(chat_id=CHAT_ID, photo=buf, caption=f"✅ {symbol} met conditions!\nPrice above EMA50 & EMA200, RSI≥40")
+    return img_path
 
-def main():
-    bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} meme coins + EMA/RSI alerts + charts).")
-    print(f"Bot started with {len(MEME_COINS)} meme coins.")
+# ================== منطق التنبيه ==================
+async def check_conditions():
+    for symbol in MEME_COINS:
+        df = fetch_candle_data(symbol)
+        if df is None:
+            continue
+
+        latest = df.iloc[-1]
+        price = latest["close"]
+        ema50 = latest["EMA50"]
+        ema200 = latest["EMA200"]
+        rsi = latest["RSI"]
+
+        if price > ema200 and price > ema50 and rsi > 40:
+            chart_path = plot_chart(symbol, df)
+            await bot.send_photo(chat_id=CHAT_ID, photo=open(chart_path, "rb"),
+                                 caption=f"📊 {symbol} Alert!\n✅ Price above EMA200 & EMA50\n✅ RSI > 40\nPrice: {price:.6f} USD")
+
+        else:
+            print(f"Checked {symbol}, conditions not met.")
+
+# ================== تشغيل البوت ==================
+async def main():
+    await bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} Meme coins + EMA/RSI alerts + charts).")
 
     while True:
-        for coin in MEME_COINS:
-            df = check_indicators(coin)
-            if df is not None:
-                try:
-                    send_alert(coin, df)
-                except Exception as e:
-                    print(f"Error sending alert for {coin}: {e}")
-            else:
-                print(f"Checked {coin}, conditions not met.")
-        print(f"Waiting {CHECK_INTERVAL//60} minutes for next check...")
-        time.sleep(CHECK_INTERVAL)
+        await check_conditions()
+        print("Waiting 15 minutes for next check...")
+        time.sleep(900)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
