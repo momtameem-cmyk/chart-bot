@@ -1,117 +1,152 @@
 import os
+import time
+import io
 import requests
 import pandas as pd
 import pandas_ta as ta
 import matplotlib.pyplot as plt
 from telegram import Bot
-import asyncio
-import time
 
-# ================== إعداد المتغيرات ==================
+# ===============================
+# إعداد التوكن و الشات من ENV
+# ===============================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-CMC_API_KEY = os.getenv("CMC_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# 154 عملة ميم (من ملفك) - بدون تكرار
-MEME_COINS = [
-    "SHIB","DOGE","FLOKI","BABYDOGE","PEPE","BONK","DOG","PIG","KONG","DOGGY","SAMO","HOGE",
-    "AIDOGE","SHIBA","KISHU","CUMMIES","ELON","WOJAK","DOGPAD","LADYS","SHIBGF","SHIBCEO","SHIBCAT",
-    "SHIBDOGE","SHIBNOBI","FLOKICEO","DOGECOLA","SHIBARB","SHIBAUP","SHIBDOWN","DOGUP","DOGDOWN",
-    "PITBULL","KUMA","DOGES","SHIBORG","KILLDOGE","SHIBA2K22","DOGECASH","SHIBBULL","SHIBKING",
-    "SHIBZILLA","FLOKIPUP","BABYFLOKI","SHIBVAX","DOGEFI","DOGEMOON","SHIBQUEEN","DOGEVERSE",
-    "SHIBCHAD","SHIBSHARK","DOGEBOSS","DOGELON","SHIBRICH","DOGEYIELD","FLOKITAMA","BABYDOGEGROW",
-    "DOGECORN","SHIBSWAP","DOGEPUNK","SHIBALAXY","FLOKIDOGE","SHIBBONK","SHIBMOON","DOGECUBE",
-    "DOGEINU","SHIBKILLER","FLOKIMOON","DOGEYACHT","SHIBPRINCE","SHIBRING","DOGECAT","FLOKIGOD",
-    "SHIBSTAR","DOGEHERO","SHIBKONG","SHIBNATION","DOGEARMY","SHIBAPUNK","SHIBLAND","FLOKIPLANET",
-    "SHIBTIGER","SHIBMARS","SHIBDAO","DOGEMETA","DOGEKING","DOGEONE","SHIBROCKET","DOGESAFE",
-    "SHIBLITE","DOGESONIC","SHIBHERO","SHIBZUKI","DOGEWORLD","SHIBGUN","SHIBGLASS","DOGEDRAGON",
-    "SHIBANGEL","SHIBBABY","DOGEYACHTCLUB","SHIBAVENGERS","DOGERICH","SHIBBOSS","DOGEAI",
-    "SHIBKNIGHT","SHIBRUSH","SHIBPAD","SHIBLORD","DOGESWAP","SHIBOSHI","DOGEZILLA","SHIBDRAGON",
-    "DOGECHEEMS","SHIBSPHERE","SHIBCOIN","DOGENOBI","SHIBX","SHIBDAOX","DOGEARMY","SHIBSWAPAI",
-    "DOGEFLOKI","SHIBMONEY","DOGEVERSEAI","SHIBDOLLAR","DOGEZUKI","SHIBANET","DOGEX","SHIBANU",
-    "DOGEYIELDX","SHIBANOVA","SHIBTRUMP","SHIBPEPE","DOGEPAD","DOGEFINANCE","SHIBWORLD","SHIBNFT",
-    "DOGEXAI","DOGENET","SHIBDAOAI","DOGEVERSEX","SHIBBULLS","DOGEZERO","SHIBORIGIN"
-]
+# ===============================
+# قائمة العملات (بدون تكرار)
+# ===============================
+MEME_COINS = list(set([
+    "DOGE","SHIB","PEPE","PENGU","TRUMP","SPX","FLOKI","WIF","FARTCOIN","BRETT","APE","MOG","SNEK","TURBO",
+    "MEW","POPCAT","TOSHI","DOG","CHEEMS","PNUT","USELESS","LION","BABYDOGE","REKT","NOT","TROLL","DORA","NPC",
+    "MEME","YZY","NEIRO","TIBBIR","BOME","AURA","MOODENG","OSAK","LIBERTY","AI16Z","PYTHIA","GIGA","GOHOME",
+    "APEPE","PEOPLE","AIC","BAN","WKC","GOAT","BERT","BITCOIN","VINE","DEGEN","DOGS","APU","BANANAS31","ALI",
+    "SIREN","NOBODY","PONKE","ANDY","CAT","ELON","KEYCAT","PEPEONTRON","TUT","SKYAI","URANUS","SKI","CHILLGUY",
+    "EGL1","MIM","PEPECOIN","SLERF","USDUC","FWOG","DONKEY","PEP","ACT","WOLF","BONE","SUNDOG","BOBO","COQ",
+    "DOGINME","FAIR3","MM","JOE","MORI","MUBARAK","FARTBOY","LIGHT","NUB","MAI","UFD","MIGGLES","WEN","TST",
+    "GME","WOJAK","BROCCOLI","ZEREBRO","KEKIUS","CAW","PIKA","MYRO","MOBY","LADYS","LEASH","OMIKAMI","BULLA",
+    "DADDY","AIDOGE","RETARDIO","HIPPO","JELLYJELLY","HYPER","SAN","PORK","HOSKY","PIPPIN","PURPE","LOFI",
+    "QUACK","KOKOK","KENDU","HOSICO","VINU","HOUSE","BENJI","MICHI","JAGER","TOKEN","DJI6930","CATE","WHY",
+    "KOMA","MANEKI","A47","CAR","PIT","STARTUP","SMOG","MAX","GORK","YURU","MASK","MOTHER","RIZZMAS","BOOP",
+    "PAIN","MUMU"
+]))
 
-# ================== دالة لجلب بيانات السوق ==================
-def fetch_candle_data(symbol):
-    url = f"https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol={symbol}&convert=USD"
-    headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
+# ===============================
+# فلتر التنبيهات
+# ===============================
+alerted = {}
+
+# ===============================
+# جلب بيانات السعر من Binance
+# ===============================
+def fetch_klines(symbol, interval="1h", limit=200):
+    url = f"https://api.binance.com/api/v3/klines"
+    params = {"symbol": f"{symbol}USDT", "interval": interval, "limit": limit}
     try:
-        response = requests.get(url, headers=headers)
-        data = response.json()
-        if "data" not in data or symbol not in data["data"]:
-            print(f"Error fetching {symbol}: {data}")
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
+        if isinstance(data, list):
+            df = pd.DataFrame(data, columns=[
+                "time","o","h","l","c","v","ct","qav","nt","tb","qtb","ignore"
+            ])
+            df["c"] = df["c"].astype(float)
+            return df
+        else:
             return None
-        price = data["data"][symbol][0]["quote"]["USD"]["price"]
-
-        # نصنع DataFrame وهمي لحساب المؤشرات (EMA & RSI)
-        df = pd.DataFrame({"close": [price] * 300})
-        df["EMA50"] = ta.ema(df["close"], length=50)
-        df["EMA200"] = ta.ema(df["close"], length=200)
-        df["RSI"] = ta.rsi(df["close"], length=14)
-
-        return df
     except Exception as e:
         print(f"Error fetching {symbol}: {e}")
         return None
 
-# ================== دالة رسم الشارت ==================
+# ===============================
+# رسم الشارت
+# ===============================
 def plot_chart(symbol, df):
-    plt.figure(figsize=(10,6))
+    try:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8,6), gridspec_kw={'height_ratios':[3,1]}, sharex=True)
 
-    # Subplot 1: السعر + EMA
-    ax1 = plt.subplot(2,1,1)
-    ax1.plot(df["close"], label="Price", color="black")
-    ax1.plot(df["EMA50"], label="EMA50 (Green)", color="green")
-    ax1.plot(df["EMA200"], label="EMA200 (Red)", color="red")
-    ax1.set_title(f"{symbol} - Price with EMA50 & EMA200")
-    ax1.legend()
+        # السعر + EMA
+        ax1.plot(df.index, df["c"], label="Price", color="black")
+        ax1.plot(df.index, df["EMA50"], label="EMA50", color="green")
+        ax1.plot(df.index, df["EMA200"], label="EMA200", color="red")
+        ax1.set_title(f"{symbol}/USDT")
+        ax1.legend(loc="upper left")
 
-    # Subplot 2: RSI
-    ax2 = plt.subplot(2,1,2, sharex=ax1)
-    ax2.plot(df["RSI"], label="RSI", color="blue")
-    ax2.axhline(40, linestyle="--", color="orange", alpha=0.7)
-    ax2.set_title("RSI")
-    ax2.legend()
+        # RSI
+        ax2.plot(df.index, df["RSI"], label="RSI", color="blue")
+        ax2.axhline(40, color="orange", linestyle="--", label="RSI 40")  # خط أفقي عند RSI=40
+        ax2.set_ylim(0,100)
+        ax2.legend(loc="upper left")
 
-    plt.tight_layout()
-    img_path = f"{symbol}_chart.png"
-    plt.savefig(img_path)
-    plt.close()
-    return img_path
+        buf = io.BytesIO()
+        plt.tight_layout()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
+        plt.close(fig)
+        return buf
+    except Exception as e:
+        print(f"Error plotting {symbol}: {e}")
+        return None
 
-# ================== منطق التنبيه ==================
-async def check_conditions():
-    for symbol in MEME_COINS:
-        df = fetch_candle_data(symbol)
-        if df is None:
-            continue
+# ===============================
+# التحقق من الشروط
+# ===============================
+def check_conditions(symbol):
+    df = fetch_klines(symbol)
+    if df is None or df.empty: 
+        return False, None
 
-        latest = df.iloc[-1]
-        price = latest["close"]
-        ema50 = latest["EMA50"]
-        ema200 = latest["EMA200"]
-        rsi = latest["RSI"]
+    df["EMA50"] = ta.ema(df["c"], length=50)
+    df["EMA200"] = ta.ema(df["c"], length=200)
+    df["RSI"] = ta.rsi(df["c"], length=14)
 
-        if price > ema200 and price > ema50 and rsi > 40:
-            chart_path = plot_chart(symbol, df)
-            await bot.send_photo(chat_id=CHAT_ID, photo=open(chart_path, "rb"),
-                                 caption=f"📊 {symbol} Alert!\n✅ Price above EMA200 & EMA50\n✅ RSI > 40\nPrice: {price:.6f} USD")
+    last = df.iloc[-1]
+    if last["c"] > last["EMA50"] and last["c"] > last["EMA200"] and last["RSI"] > 40:
+        return True, df
+    return False, df
 
+# ===============================
+# بدء البوت
+# ===============================
+print(f"Loaded {len(MEME_COINS)} meme coins.")
+
+try:
+    bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} meme coins + EMA/RSI alerts + charts).")
+except Exception as e:
+    print(f"Error sending start message: {e}")
+
+# ===============================
+# حلقة التشغيل
+# ===============================
+while True:
+    for coin in MEME_COINS:
+        ok, df = check_conditions(coin)
+
+        if ok:
+            if not alerted.get(coin, False):
+                last = df.iloc[-1]
+                chart = plot_chart(coin, df)
+                caption = (
+                    f"📈 Alert for {coin}/USDT\n\n"
+                    f"💵 Price: {last['c']:.5f}\n"
+                    f"📊 EMA50 (green): {last['EMA50']:.5f}\n"
+                    f"📊 EMA200 (red): {last['EMA200']:.5f}\n"
+                    f"📉 RSI: {last['RSI']:.2f}"
+                )
+
+                if chart:
+                    bot.send_photo(chat_id=CHAT_ID, photo=chart, caption=caption)
+                else:
+                    bot.send_message(chat_id=CHAT_ID, text=caption)
+
+                alerted[coin] = True
+                print(f"Alert sent for {coin}")
+            else:
+                print(f"Already alerted {coin}, skipping.")
         else:
-            print(f"Checked {symbol}, conditions not met.")
+            alerted[coin] = False
+            print(f"Checked {coin}, conditions not met.")
 
-# ================== تشغيل البوت ==================
-async def main():
-    await bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} Meme coins + EMA/RSI alerts + charts).")
-
-    while True:
-        await check_conditions()
-        print("Waiting 15 minutes for next check...")
-        time.sleep(900)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    print("⏳ Waiting 15 minutes for next check...")
+    time.sleep(900)
