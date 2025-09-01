@@ -1,6 +1,6 @@
-python-telegram-bot==20.3
 requests==2.32.0
 pandas==2.1.1
 numpy==1.24.4
 pandas-ta==0.3.14b0
 matplotlib==3.8.0
+telepot==12.7
