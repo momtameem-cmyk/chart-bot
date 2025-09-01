@@ -1,24 +1,21 @@
 import os
-import asyncio
+import time
 import requests
 import pandas as pd
 import pandas_ta as ta
 import matplotlib.pyplot as plt
 from io import BytesIO
+import asyncio
 from telegram import Bot
 
-# ==========================
-# الإعدادات من الـ ENV
-# ==========================
-CMC_API_KEY = os.getenv("COINMARKETCAP_API_KEY")
+# --- إعداد المفاتيح من env ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+CMC_API_KEY = os.getenv("COINMARKETCAP_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# ==========================
-# قائمة عملات الميم (154 رمز)
-# ==========================
+# --- قائمة عملات الميم (154 رمز) ---
 MEME_COINS = [
     "DOGE","SHIB","PEPE","PENGU","TRUMP","SPX","FLOKI","WIF","FARTCOIN","BRETT",
     "APE","MOG","SNEK","TURBO","MEW","POPCAT","TOSHI","DOG","CHEEMS","PNUT",
@@ -38,92 +35,73 @@ MEME_COINS = [
     "MOTHER","RIZZMAS","BOOP","PAIN","MUMU"
 ]
 
-# ==========================
-# جلب الأسعار (batch)
-# ==========================
+# --- دالة لجلب البيانات من CoinMarketCap ---
 def fetch_data(symbols):
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
-    headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
     params = {"symbol": ",".join(symbols), "convert": "USD"}
-    try:
-        r = requests.get(url, headers=headers, params=params, timeout=30)
-        data = r.json()
-        return data.get("data", {})
-    except Exception as e:
-        print(f"❌ Error fetching data: {e}")
-        return {}
+    headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
+    response = requests.get(url, headers=headers, params=params)
+    return response.json().get("data", {})
 
-# ==========================
-# رسم الشارت
-# ==========================
-def plot_chart(df, coin):
-    plt.figure(figsize=(8,5))
-
-    # السعر
-    plt.plot(df.index, df["close"], label="Price", color="black", linewidth=1)
-
-    # MA7 أخضر
-    plt.plot(df.index, df["MA7"], label="MA7", color="green", linewidth=1.2)
-
-    # MA25 أحمر
-    plt.plot(df.index, df["MA25"], label="MA25", color="red", linewidth=1.2)
-
-    plt.title(f"{coin} Price with MA7 & MA25")
+# --- رسم الشارت ---
+def plot_chart(df, symbol):
+    plt.figure(figsize=(8, 5))
+    plt.plot(df.index, df["close"], label="Price", color="blue")
+    plt.plot(df.index, df["MA7"], label="MA7", color="green", linewidth=2)
+    plt.plot(df.index, df["MA25"], label="MA25", color="red", linewidth=2)
+    plt.title(f"{symbol} MA7 vs MA25")
     plt.legend()
-    plt.grid(True)
-
     buf = BytesIO()
     plt.savefig(buf, format="png")
     buf.seek(0)
     plt.close()
     return buf
 
-# ==========================
-# التحقق من الإشارات
-# ==========================
+# --- التحقق من الاشارات ---
 async def check_signals():
-    batch_size = 80  # دفعة 80 عملة لكل طلب
+    batch_size = 80  # دفعات حتى نتجنب Rate Limit
     for i in range(0, len(MEME_COINS), batch_size):
         batch = MEME_COINS[i:i+batch_size]
         data = fetch_data(batch)
 
         for symbol in batch:
             try:
+                if symbol not in data:
+                    print(f"⚠️ Coin not found on CMC: {symbol}")
+                    continue
+
                 price = data[symbol]["quote"]["USD"]["price"]
 
-                # نجهز DataFrame تجريبي (نحتاج candles حقيقية عادة من CMC أو Binance API)
+                # نصنع DataFrame صغير لاختبار MA
                 df = pd.DataFrame({"close": [price]*50})
                 df["MA7"] = df["close"].rolling(7).mean()
                 df["MA25"] = df["close"].rolling(25).mean()
-                df["RSI"] = ta.rsi(df["close"], length=14)
 
                 latest = df.iloc[-1]
 
-                # شرط التقاطع
-                if latest["MA7"] > latest["MA25"] and latest["RSI"] >= 40:
+                # الشرط: MA7 > MA25 (بدون RSI)
+                if latest["MA7"] > latest["MA25"]:
                     print(f"✅ Signal found in {symbol}")
                     buf = plot_chart(df, symbol)
                     await bot.send_photo(
                         chat_id=CHAT_ID,
                         photo=buf,
-                        caption=f"✅ {symbol}: MA7 فوق MA25 + RSI={latest['RSI']:.2f}"
+                        caption=f"✅ {symbol}: MA7 فوق MA25"
                     )
                 else:
                     print(f"Checked {symbol}, no signal.")
 
             except Exception as e:
-                print(f"Error checking {symbol}: {e}")
+                print(f"❌ Error checking {symbol}: {e}")
 
-# ==========================
-# تشغيل البوت
-# ==========================
+# --- التشغيل المستمر ---
 async def main():
-    await bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} meme coins, MA7/MA25 + RSI≥40)")
+    await bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started ({len(MEME_COINS)} meme coins, MA7/MA25 alerts).")
     while True:
-        await bot.send_message(chat_id=CHAT_ID, text=f"🔍 Starting check for {len(MEME_COINS)} coins...")
+        print(f"🔍 Starting check for {len(MEME_COINS)} coins...")
         await check_signals()
         print("⏳ Waiting 5 minutes for next check...")
-        await asyncio.sleep(300)  # 5 دقائق
+        await asyncio.sleep(300)
 
 if __name__ == "__main__":
     asyncio.run(main())
