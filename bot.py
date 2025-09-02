@@ -1,136 +1,132 @@
 import os
 import time
+import io
 import requests
 import pandas as pd
 import matplotlib.pyplot as plt
-from io import BytesIO
-from telegram import Bot
 
-# 📌 قراءة المتغيرات من بيئة Heroku
+# إعداد المفاتيح
 CMC_API_KEY = os.getenv("COINMARKETCAP_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-bot = Bot(token=TELEGRAM_TOKEN)
-
-# 📌 قائمة عملات الميم (١٥٤ عملة)
+# قائمة العملات
 MEME_COINS = [
-    "DOGE","SHIB","PEPE","PENGU","TRUMP","SPX","FLOKI","WIF","FARTCOIN","BRETT",
-    "APE","MOG","SNEK","TURBO","MEW","POPCAT","TOSHI","DOG","CHEEMS","PNUT","USELESS",
-    "LION","BABYDOGE","REKT","NOT","TROLL","DORA","NPC","MEME","YZY","NEIRO","TIBBIR",
-    "BOME","AURA","MOODENG","OSAK","LIBERTY","AI16Z","PYTHIA","GIGA","GOHOME","APEPE",
-    "PEOPLE","AIC","BAN","WKC","GOAT","BERT","BITCOIN","VINE","DEGEN","DOGS","APU",
-    "BANANAS31","ALI","SIREN","NOBODY","PONKE","ANDY","CAT","ELON","KEYCAT","PEPEONTRON",
-    "TUT","SKYAI","URANUS","SKI","CHILLGUY","EGL1","MIM","PEPECOIN","SLERF","USDUC",
-    "FWOG","DONKEY","PEP","ACT","WOLF","BONE","SUNDOG","BOBO","COQ","DOGINME","FAIR3",
-    "MM","JOE","MORI","MUBARAK","FARTBOY","LIGHT","NUB","MAI","UFD","MIGGLES","WEN",
-    "TST","GME","WOJAK","BROCCOLI","ZEREBRO","KEKIUS","CAW","PIKA","MYRO","MOBY",
-    "LADYS","LEASH","OMIKAMI","BULLA","DADDY","AIDOGE","RETARDIO","HIPPO","JELLYJELLY",
-    "HYPER","SAN","PORK","HOSKY","PIPPIN","PURPE","LOFI","QUACK","KOKOK","KENDU",
-    "HOSICO","VINU","HOUSE","BENJI","MICHI","JAGER","TOKEN","DJI6930","CATE","WHY",
-    "KOMA","MANEKI","A47","CAR","PIT","STARTUP","SMOG","MAX","GORK","YURU","MASK",
-    "MOTHER","RIZZMAS","BOOP","PAIN","MUMU"
+    "DOGE", "SHIB", "PEPE", "PENGU", "TRUMP", "SPX", "FLOKI", "WIF", "FARTCOIN",
+    "BRETT", "APE", "MOG", "SNEK", "TURBO", "MEW", "POPCAT", "TOSHI", "DOG",
+    "CHEEMS", "PNUT", "USELESS", "LION", "BABYDOGE", "REKT", "NOT", "TROLL",
+    "DORA", "NPC", "MEME", "YZY", "NEIRO", "TIBBIR", "BOME", "AURA", "MOODENG",
+    "OSAK", "LIBERTY", "AI16Z", "PYTHIA", "GIGA", "GOHOME", "APEPE", "PEOPLE",
+    "AIC", "BAN", "WKC", "GOAT", "BERT", "BITCOIN", "VINE", "DEGEN", "DOGS",
+    "APU", "BANANAS31", "ALI", "SIREN", "NOBODY", "PONKE", "ANDY", "CAT", "ELON",
+    "KEYCAT", "PEPEONTRON", "TUT", "SKYAI", "URANUS", "SKI", "CHILLGUY", "EGL1",
+    "MIM", "PEPECOIN", "SLERF", "USDUC", "FWOG", "DONKEY", "PEP", "ACT", "WOLF",
+    "BONE", "SUNDOG", "BOBO", "COQ", "DOGINME", "FAIR3", "MM", "JOE", "MORI",
+    "MUBARAK", "FARTBOY", "LIGHT", "NUB", "MAI", "UFD", "MIGGLES", "WEN", "TST",
+    "GME", "WOJAK", "BROCCOLI", "ZEREBRO", "KEKIUS", "CAW", "PIKA", "MYRO", "MOBY",
+    "LADYS", "LEASH", "OMIKAMI", "BULLA", "DADDY", "AIDOGE", "RETARDIO", "HIPPO",
+    "JELLYJELLY", "HYPER", "SAN", "PORK", "HOSKY", "PIPPIN", "PURPE", "LOFI",
+    "QUACK", "KOKOK", "KENDU", "HOSICO", "VINU", "HOUSE", "BENJI", "MICHI", "JAGER",
+    "TOKEN", "DJI6930", "CATE", "WHY", "KOMA", "MANEKI", "A47", "CAR", "PIT",
+    "STARTUP", "SMOG", "MAX", "GORK", "YURU", "MASK", "MOTHER", "RIZZMAS", "BOOP",
+    "PAIN", "MUMU"
 ]
 
-# ================================
-# 📌 CoinMarketCap API
-# ================================
-def fetch_from_cmc(symbol):
-    url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/ohlcv/latest"
-    params = {"symbol": symbol, "interval": "1h"}
+# ------------------ Telegram ------------------
+def send_text(msg: str):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": msg}
+    requests.post(url, data=data)
+
+def send_photo(buf, caption=""):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    files = {"photo": buf}
+    data = {"chat_id": CHAT_ID, "caption": caption}
+    requests.post(url, data=data, files=files)
+
+# ------------------ CoinMarketCap ------------------
+def fetch_cmc_data(symbol, interval="5m", limit=200):
+    url = f"https://pro-api.coinmarketcap.com/v2/cryptocurrency/ohlcv/historical"
+    params = {"symbol": symbol, "interval": interval, "count": limit}
     headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
-    try:
-        r = requests.get(url, params=params, headers=headers)
-        data = r.json()
-        if "data" not in data or symbol not in data["data"]:
-            return None
-        quotes = data["data"][symbol]["quotes"]
-        df = pd.DataFrame([{
-            "time": q["time_open"],
-            "close": q["quote"]["USD"]["close"]
-        } for q in quotes])
-        return df
-    except Exception:
+    r = requests.get(url, headers=headers, params=params)
+    data = r.json()
+    if "data" not in data:
         return None
+    quotes = data["data"]["quotes"]
+    df = pd.DataFrame([{
+        "time": q["time_open"],
+        "close": q["quote"]["USD"]["close"],
+    } for q in quotes])
+    return df
 
-# ================================
-# 📌 CoinGecko API
-# ================================
-def fetch_from_cg(symbol):
-    url = f"https://api.coingecko.com/api/v3/coins/{symbol.lower()}/market_chart"
-    params = {"vs_currency": "usd", "days": "1", "interval": "hourly"}
-    try:
-        r = requests.get(url, params=params)
-        data = r.json()
-        if "prices" not in data:
-            return None
-        df = pd.DataFrame({
-            "time": [pd.to_datetime(x[0], unit="ms") for x in data["prices"]],
-            "close": [x[1] for x in data["prices"]]
-        })
-        return df
-    except Exception:
-        return None
-
-# ================================
-# 📌 Strategy check
-# ================================
-def check_signal(symbol):
-    df = fetch_from_cmc(symbol)
-    source = "CMC"
-    if df is None:
-        df = fetch_from_cg(symbol)
-        source = "CG"
-    if df is None or len(df) < 25:
+# ------------------ Signals ------------------
+def check_signals(symbol):
+    df = fetch_cmc_data(symbol)
+    if df is None or df.empty:
         return None, None, None
 
-    df["MA7"] = df["close"].rolling(window=7).mean()
-    df["MA25"] = df["close"].rolling(window=25).mean()
+    df["MA7"] = df["close"].rolling(7).mean()
+    df["MA25"] = df["close"].rolling(25).mean()
 
-    last = df.iloc[-1]
+    latest = df.iloc[-1]
     prev = df.iloc[-2]
 
-    signal = None
-    if prev["MA7"] < prev["MA25"] and last["MA7"] > last["MA25"]:
-        signal = "BUY"
-    elif prev["MA7"] > prev["MA25"] and last["MA7"] < last["MA25"]:
-        signal = "SELL"
+    # تنبيه مبكر (لو الفرق أقل من 1%)
+    diff = abs(latest["MA7"] - latest["MA25"]) / latest["MA25"] * 100
+    if diff < 1:
+        early_alert = f"⚠️ {symbol} قريب من التقاطع (فرق {diff:.2f}%)"
+    else:
+        early_alert = None
 
-    return signal, source, df
+    # إشارة شراء / بيع
+    if prev["MA7"] < prev["MA25"] and latest["MA7"] > latest["MA25"]:
+        signal = f"✅ BUY Signal on {symbol} (MA7 ↑ فوق MA25)"
+    elif prev["MA7"] > prev["MA25"] and latest["MA7"] < latest["MA25"]:
+        signal = f"❌ SELL Signal on {symbol} (MA7 ↓ تحت MA25)"
+    else:
+        signal = None
 
-# ================================
-# 📌 Chart creation
-# ================================
-def generate_chart(symbol, df):
-    plt.figure(figsize=(8,4))
-    plt.plot(df["close"], label="Price", color="black")
-    plt.plot(df["MA7"], label="MA7", color="green")
-    plt.plot(df["MA25"], label="MA25", color="red")
+    return signal, early_alert, df
+
+def plot_chart(symbol, df):
+    plt.figure(figsize=(8, 5))
+    plt.plot(df["time"], df["close"], label="Price", color="black")
+    plt.plot(df["time"], df["MA7"], label="MA7", color="green")
+    plt.plot(df["time"], df["MA25"], label="MA25", color="red")
+    plt.title(f"{symbol} Price with MA7 & MA25")
     plt.legend()
-    plt.title(symbol)
-    buf = BytesIO()
+    buf = io.BytesIO()
     plt.savefig(buf, format="png")
     buf.seek(0)
     plt.close()
     return buf
 
-# ================================
-# 📌 Main loop
-# ================================
-def main():
-    bot.send_message(chat_id=CHAT_ID, text=f"🤖 Bot started with {len(MEME_COINS)} meme coins (CMC+CG).")
+# ------------------ Main ------------------
+if __name__ == "__main__":
+    send_text(f"🤖 Bot started with {len(MEME_COINS)} meme coins (CMC).")
+
     while True:
         signals = []
-        for symbol in MEME_COINS:
-            signal, source, df = check_signal(symbol)
-            if signal:
-                chart = generate_chart(symbol, df)
-                bot.send_photo(chat_id=CHAT_ID, photo=chart,
-                               caption=f"✅ {symbol} ({source}) → {signal} signal!")
-                signals.append(symbol)
-        if not signals:
-            bot.send_message(chat_id=CHAT_ID, text="❌ لا يوجد عملات حققت الشرط الآن.")
-        time.sleep(300)  # كل 5 دقائق
+        alerts = []
 
-if __name__ == "__main__":
-    main()
+        for coin in MEME_COINS:
+            try:
+                signal, early_alert, df = check_signals(coin)
+                if early_alert:
+                    alerts.append(early_alert)
+                if signal:
+                    signals.append(signal)
+                    chart = plot_chart(coin, df)
+                    send_photo(chart, caption=signal)
+            except Exception as e:
+                print(f"Error checking {coin}: {e}")
+
+        if alerts:
+            send_text("🔔 إشعارات مبكرة (قريبة من التقاطع):\n" + "\n".join(alerts))
+        if signals:
+            send_text("🚀 إشارات مؤكدة (تقاطع تم):\n" + "\n".join(signals))
+        if not alerts and not signals:
+            send_text("❌ لا يوجد عملات حققت أو اقتربت من الشرط الآن.")
+
+        time.sleep(300)  # 5 دقائق
